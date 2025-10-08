@@ -4,6 +4,10 @@ const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
 const Redis = require('ioredis');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcrypt');
+const { authMiddleware, SECRET_KEY } = require('./middleware/auth');
+
 
 
 const app = express();
@@ -16,6 +20,37 @@ const redisSub = new Redis(); // Subscriber
 // Servir les fichiers statiques
 app.use(express.static(__dirname));
 
+
+
+const users = []; // { id, username, passwordHash }
+app.use(express.json());
+
+app.post('/register', async (req, res) => {
+    const { username, password } = req.body;
+    if (users.find(u => u.username === username)) {
+        return res.status(400).json({ error: 'Utilisateur déjà existant' });
+    }
+    const passwordHash = await bcrypt.hash(password, 10);
+    const newUser = { id: users.length + 1, username, passwordHash };
+    users.push(newUser);
+    res.json({ message: 'Inscription réussie' });
+});
+
+app.post('/login', async (req, res) => {
+    const { username, password } = req.body;
+    const user = users.find(u => u.username === username);
+    if (!user) return res.status(401).json({ error: 'Mot de passe ou utilisateurs faux' });
+
+    const valid = await bcrypt.compare(password, user.passwordHash);
+    if (!valid) return res.status(401).json({ error: 'Mot de passe ou utilisateurs faux' });
+
+    const token = jwt.sign({ userId: user.id, username: user.username }, SECRET_KEY, { expiresIn: '1m' });
+    res.json({ token });
+});
+
+
+
+
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
@@ -24,8 +59,10 @@ app.get('/', (req, res) => {
 let rooms = new Set();
 
 
+
+
 redisSub.subscribe('chat_messages', (err) => {
-    if (err) console.error('Erreur subscription Redis:', err);
+    if (err) console.error('Erreur Redis:', err);
 });
 
 redisSub.on('message', (channel, message) => {
@@ -44,9 +81,44 @@ redisSub.on('message', (channel, message) => {
     }
 });
 
+
+
+function verifyToken(token) {
+    try {
+        return jwt.verify(token, SECRET_KEY);
+    } catch {
+        return null;
+    }
+}
+
+io.use((socket, next) => {
+    const token = socket.handshake.auth?.token;
+    if (!token) return next(new Error('Token manquant'));
+    try {
+        socket.data.user = jwt.verify(token, SECRET_KEY);
+        next();
+    } catch (err) {
+        return next(new Error('Token invalide'));
+    }
+});
+
+
 io.on('connection', (socket) => {
     console.log('🟢 Utilisateur connecté:', socket.id);
 
+
+    socket.on('auth', (token) => {
+        const payload = verifyToken(token);
+        if (!payload) {
+            socket.emit('auth_error', { message: 'Token invalide' });
+            socket.disconnect();
+            return;
+        }
+
+        socket.data.user = payload;
+        console.log(`authentifié : ${payload.username}`);
+        socket.emit('auth_success', { username: payload.username });
+    });
     // Envoyer la liste actuelle des salons au client
     socket.emit('update rooms', Array.from(rooms));
 
