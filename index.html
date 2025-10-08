@@ -7,14 +7,14 @@
     <style>
         body { font-family: sans-serif; margin: 0; padding: 20px; background-color: #f4f4f4; }
         #chat-container { max-width: 800px; margin: 20px auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        #messages { list-style-type: none; margin: 0; padding: 0; max-height: 400px; overflow-y: auto; border: 1px solid #eee; padding: 10px; margin-bottom: 10px; }
+        #messages { list-style: none; margin: 0; padding: 0; max-height: 400px; overflow-y: auto; border: 1px solid #eee; padding: 10px; margin-bottom: 10px; }
         #messages li { padding: 8px 10px; border-bottom: 1px solid #eee; }
         #messages li:last-child { border-bottom: none; }
         #messages li strong { color: #007bff; }
-        #form-join, #form-chat { display: flex; margin-bottom: 10px; }
-        #form-join input, #form-chat input { flex-grow: 1; padding: 10px; border: 1px solid #ddd; border-radius: 4px; margin-right: 5px; }
-        #form-join button, #form-chat button { padding: 10px 15px; background-color: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; }
-        #form-join button:hover, #form-chat button:hover { background-color: #218838; }
+        #form-join, #form-create, #form-chat { display: flex; margin-bottom: 10px; }
+        #form-join input, #form-create input, #form-chat input { flex-grow: 1; padding: 10px; border: 1px solid #ddd; border-radius: 4px; margin-right: 5px; }
+        #form-join button, #form-create button, #form-chat button { padding: 10px 15px; background-color: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        #form-join button:hover, #form-create button:hover, #form-chat button:hover { background-color: #218838; }
         .hidden { display: none; }
     </style>
 </head>
@@ -23,9 +23,14 @@
     <h1>Chat Multi-Salons</h1>
 
     <div id="join-section">
+        <form id="form-create">
+            <input id="username-input-create" placeholder="Votre pseudo" required>
+            <input id="room-input" placeholder="Nom du salon" required>
+            <button type="submit">Créer le salon</button>
+        </form>
+
         <form id="form-join">
-            <input id="username-input" autocomplete="off" placeholder="Votre pseudo" required />
-            <input id="room-input" autocomplete="off" placeholder="Nom du salon (ex: général, dev)" required />
+            <input id="username-input-join" placeholder="Votre pseudo" required>
             <select id="room-select" required>
                 <option value="" disabled selected>Choisissez un salon existant</option>
             </select>
@@ -37,7 +42,7 @@
         <p>Vous êtes dans le salon : <strong id="current-room-display"></strong></p>
         <ul id="messages"></ul>
         <form id="form-chat">
-            <input id="message-input" autocomplete="off" placeholder="Votre message..." />
+            <input id="message-input" placeholder="Votre message...">
             <button type="submit">Envoyer</button>
         </form>
     </div>
@@ -49,9 +54,13 @@
 
     const joinSection = document.getElementById('join-section');
     const chatSection = document.getElementById('chat-section');
+
+    const formCreate = document.getElementById('form-create');
     const formJoin = document.getElementById('form-join');
-    const usernameInput = document.getElementById('username-input');
+    const usernameCreate = document.getElementById('username-input-create');
+    const usernameJoin = document.getElementById('username-input-join');
     const roomInput = document.getElementById('room-input');
+    const roomSelect = document.getElementById('room-select');
     const currentRoomDisplay = document.getElementById('current-room-display');
 
     const formChat = document.getElementById('form-chat');
@@ -61,80 +70,85 @@
     let currentUsername = '';
     let currentRoom = '';
 
-    const availableRooms = ["général", "dev", "jeux", "musique", "random"];
-    const roomSelect = document.getElementById('room-select');
-    availableRooms.forEach(room => {
-        const option = document.createElement('option');
-        option.value = room;
-        option.textContent = room;
-        roomSelect.appendChild(option);
+    // 🔥 Mise à jour des salons
+    socket.on('update rooms', (rooms) => {
+        roomSelect.innerHTML = '<option value="" disabled selected>Choisissez un salon existant</option>';
+        rooms.forEach(room => {
+            const opt = document.createElement('option');
+            opt.value = room;
+            opt.textContent = room;
+            roomSelect.appendChild(opt);
+        });
     });
 
-    // Quand on choisit un salon dans le <select>, on le met dans le champ texte
+    // Sélection dans le select remplit le champ texte (facultatif)
     roomSelect.addEventListener('change', () => {
         roomInput.value = roomSelect.value;
     });
 
-    // 1. Gérer la soumission du formulaire de connexion
-    formJoin.addEventListener('submit', (e) => {
+    // Création salon
+    formCreate.addEventListener('submit', (e) => {
         e.preventDefault();
-        if (usernameInput.value && roomInput.value) {
-            currentUsername = usernameInput.value;
-            currentRoom = roomInput.value;
-            currentRoomDisplay.textContent = currentRoom;
+        const username = usernameCreate.value.trim();
+        const room = roomInput.value.trim();
+        if (!username || !room) return alert('Pseudo et nom du salon requis');
 
-            // TODO: Émettre un événement 'join room' vers le serveur
-            // avec le pseudo et le nom du salon.
-            socket.emit('join room', { username: currentUsername, room: currentRoom });
+        currentUsername = username;
+        currentRoom = room;
+        currentRoomDisplay.textContent = room;
 
-
-
+        socket.emit('create room', { username, room }, (ack) => {
+            if (!ack || !ack.ok) return alert('Erreur création salon');
             joinSection.classList.add('hidden');
             chatSection.classList.remove('hidden');
-        }
+        });
     });
 
-    // 2. Gérer la soumission du formulaire de chat
+    // Rejoindre salon existant
+    formJoin.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const username = usernameJoin.value.trim();
+        const room = roomSelect.value;
+        if (!username || !room) return alert('Pseudo et salon requis');
+
+        currentUsername = username;
+        currentRoom = room;
+        currentRoomDisplay.textContent = room;
+
+        socket.emit('join room', { username, room }, (ack) => {
+            if (!ack || !ack.ok) return alert('Erreur rejoindre salon');
+            joinSection.classList.add('hidden');
+            chatSection.classList.remove('hidden');
+        });
+    });
+
+    // Envoyer message
     formChat.addEventListener('submit', (e) => {
         e.preventDefault();
-        if (messageInput.value) {
-            // TODO: Émettre un événement 'chat message' vers le serveur
-            // avec le message, le pseudo et le salon actuel.
-            // ... dans formChat.addEventListener('submit', ...)
-            socket.emit('chat message', {
-                username: currentUsername,
-                room: currentRoom,
-                message: messageInput.value
-            });
-// ...
-            messageInput.value = '';
-        }
+        if (!messageInput.value.trim()) return;
+        socket.emit('chat message', {
+            username: currentUsername,
+            room: currentRoom,
+            message: messageInput.value.trim()
+        });
+        messageInput.value = '';
     });
 
-    // 3. Écouter les messages entrants du serveur
+    // Affichage des messages
     socket.on('chat message', (data) => {
-        const item = document.createElement('li');
-        item.innerHTML = `<strong>${data.username}</strong> (${data.room}) : ${data.message}`;
-        messages.appendChild(item);
-        messages.scrollTop = messages.scrollHeight; // Scroll automatique
-    });
-
-    // 4. Écouter les notifications de connexion/déconnexion dans le salon
-    socket.on('room message', (data) => {
-        const item = document.createElement('li');
-        item.style.fontStyle = 'italic';
-        item.style.color = '#666';
-        item.textContent = data.message;
-        messages.appendChild(item);
+        const li = document.createElement('li');
+        li.innerHTML = `<strong>${data.username}</strong>: ${data.message}`;
+        messages.appendChild(li);
         messages.scrollTop = messages.scrollHeight;
     });
 
-    socket.on('connect', () => {
-        console.log('Connecté au serveur Socket.IO');
-    });
-
-    socket.on('disconnect', () => {
-        console.log('Déconnecté du serveur Socket.IO');
+    // Notifications système
+    socket.on('room message', (data) => {
+        const li = document.createElement('li');
+        li.style.fontStyle = 'italic';
+        li.textContent = data.message;
+        messages.appendChild(li);
+        messages.scrollTop = messages.scrollHeight;
     });
 </script>
 </body>
